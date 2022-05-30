@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
   });  
 
-  println!("Enter orders in the form Trade: {{quantity}} BTC @ {{price}} between {{buy_id}} and {{sell_id}}");
+  println!("Enter orders in the form-  {{id}}: {{Buy|Sell}} {{quantity}} BTC @ {{price}}");
 
   process_orders(console_input.filter_map(|x| future::ready(parse_order_input(&x))))
     .for_each(|trade| {
