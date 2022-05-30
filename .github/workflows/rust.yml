@@ -3,10 +3,11 @@ on:
   push:
     branches:
       - master
+      - main
       - 'feature/**'
       - 'dev/**'
   pull_request:
-    branches: [ master ]
+    branches: [ master,main ]
 jobs:
   check:
     name: Check

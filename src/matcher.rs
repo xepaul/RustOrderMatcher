@@ -11,13 +11,13 @@ pub mod matcheri {
   #[derive(Debug, Copy, Clone, Eq, PartialEq)]
   pub struct Order {
     pub id: usize,
-    pub(crate) order_type: OrderType,
+    pub order_type: OrderType,
     pub price: u32,
     pub quantity: u32,
   }
   #[derive(Debug, Eq, PartialEq)]
   pub struct Trade {
-    pub(crate) buy_id: usize,
+    pub buy_id: usize,
     pub sell_id: usize,
     pub price: u32, // this should be the sell price.
     pub quantity_traded: u32,
@@ -41,18 +41,18 @@ pub mod matcheri {
     return go(&order_map);
     fn go(orders: &HashMap<usize, Order>) -> (Vec<Order>, Vec<Trade>) {
       (|| {
-        let v = orders
+        let sell = orders
           .iter()
           .filter(|(_, b)| b.order_type == OrderType::Sell)
           .sorted_by(|a, b| Ord::cmp(&b.0, &a.0))
           .min_by(|x, y| x.1.price.cmp(&y.1.price))?;
-        let b = orders
+        let buy = orders
           .iter()
           .filter(|(_, b)| b.order_type == OrderType::Buy)
           .sorted_by(|a, b| Ord::cmp(&b.0, &a.0))
           .rev()
-          .find(|x| v.1.price <= x.1.price)?;
-        let trade_quantity = b.1.quantity.min(v.1.quantity);
+          .find(|x| sell.1.price <= x.1.price)?;
+        let trade_quantity = buy.1.quantity.min(sell.1.quantity);
         let update_orders = |orders: &HashMap<usize, Order>, id: usize| {
           let update_order = |o: Order| -> Option<Order> {
             let n_quantity = o.quantity - trade_quantity;
@@ -67,16 +67,16 @@ pub mod matcheri {
           };
           return orders.alter(|oo| oo.and_then(update_order), id);
         };
-        let n1_orders = update_orders(orders, *b.0);
-        let n_orders = update_orders(&n1_orders, *v.0);
-
+                
         let new_trade = Trade {
-          buy_id: b.1.id,
-          sell_id: v.1.id,
-          price: v.1.price,
+          buy_id: buy.1.id,
+          sell_id: sell.1.id,
+          price: sell.1.price,
           quantity_traded: trade_quantity,
         };
-        let (partials, mut building) = go(&n_orders);
+        let nxt_orders = update_orders(&update_orders(orders, *buy.0), *sell.0);
+
+        let (partials, mut building) = go(&nxt_orders);
         building.insert(0, new_trade);
         return Some((partials, building));
       })()
@@ -96,15 +96,15 @@ pub mod matcheri {
     return go(&orders);
     fn go(orders: &Vec<Order>) -> (Vec<Order>, Vec<Trade>) {
       (|| {
-        let v = orders
+        let sell = orders
           .iter()
           .filter(|b| b.order_type == OrderType::Sell)
           .min_by(|x, y| x.price.cmp(&y.price))?;
-        let b = orders
+        let buy = orders
           .iter()
           .filter(|b| b.order_type == OrderType::Buy)
-          .find(|x| v.price <= x.price)?;
-        let trade_quantity = b.quantity.min(v.quantity);
+          .find(|x| sell.price <= x.price)?;
+        let trade_quantity = buy.quantity.min(sell.quantity);
 
         let update_order = |o: Order| -> Option<Order> {
           let n_quantity = o.quantity - trade_quantity;
@@ -120,7 +120,7 @@ pub mod matcheri {
         let new_orders: Vec<Order> = orders // should use mut_retain
           .into_iter()
           .filter_map(|o| {
-            if (*o).id == v.id || (*o).id == b.id {
+            if (*o).id == sell.id || (*o).id == buy.id {
               update_order(*o)
             } else {
               Some(*o)
@@ -128,9 +128,9 @@ pub mod matcheri {
           })
           .collect();
         let new_trade = Trade {
-          buy_id: b.id,
-          sell_id: v.id,
-          price: v.price,
+          buy_id: buy.id,
+          sell_id: sell.id,
+          price: sell.price,
           quantity_traded: trade_quantity,
         };
         let (partials, mut building) = go(&new_orders);
@@ -145,20 +145,17 @@ pub mod matcheri {
   use futures::{future, Stream};
   pub fn process_orders(stream: impl Stream<Item = Order>) -> impl Stream<Item = Trade> {
     stream
-      .scan(Vec::new(), |s: &mut std::vec::Vec<Order>, y| {
-        s.push(y);
-        if y.order_type == OrderType::Buy {
-          let (o, trades) = match_trades(&s);
-          // for key in o.iter() {
-          //   println!("Partials: {key:?} ");
-          // }
-          *s = o;
-          future::ready(Some(Some(trades)))
-        } else {
-          future::ready(Some(None))
-        }
+      .scan(Vec::new(), |state: &mut std::vec::Vec<Order>, order| {
+        state.push(order);
+
+        let (remaining_orders, trades) = match_trades(&state);
+        // for key in o.iter() {
+        //   println!("Partials: {key:?} ");
+        // }
+        *state = remaining_orders;
+        future::ready(Some(Some(trades)))
       })
-      .filter_map(|x| future::ready(x))     
+      .filter_map(|x| future::ready(x))
       .flat_map(|x| stream::iter(x))
   }
 }
@@ -286,7 +283,6 @@ pub mod matcher_processor_tests {
 
     assert_eq!(t1, stream.collect::<Vec<_>>().await);
   }
-
 }
 pub mod matcher_tests {
   use super::matcheri::{
